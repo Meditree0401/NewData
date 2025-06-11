@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
 import tempfile
+import io
 
 st.title("월간 출퇴근 자동 병합 시스템")
 
@@ -54,15 +55,22 @@ if caps_file and att_file:
                 ws.cell(row=start_row, column=col_idx, value=val)
             start_row += 1
 
-        # 7. 병합 완료된 파일 다운로드 제공
+        # 7. 병합된 파일 저장 → 바이너리 형태로 다시 읽기
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out_tmp:
             wb.save(out_tmp.name)
-            st.success("✅ 병합이 완료되었습니다! 아래에서 파일을 다운로드하세요.")
-            st.download_button(
-                label="📤 병합된 파일 다운로드",
-                data=open(out_tmp.name, "rb"),
-                file_name="병합된_근무기록.xlsx"
-            )
+
+            # 바이너리 데이터로 읽고 BytesIO 객체로 변환
+            with open(out_tmp.name, "rb") as f:
+                bytes_data = io.BytesIO(f.read())
+
+        # 8. 다운로드 버튼
+        st.success("✅ 병합이 완료되었습니다! 아래에서 파일을 다운로드하세요.")
+        st.download_button(
+            label="📤 병합된 파일 다운로드",
+            data=bytes_data,
+            file_name="병합된_근무기록.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
         st.error(f"❌ 파일 병합 중 오류가 발생했습니다:\n\n{str(e)}")
