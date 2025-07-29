@@ -32,14 +32,21 @@ if caps_file and att_file:
         # 누락된 데이터만 필터링
         missing_df = caps_df[caps_df.set_index(['사원번호', '일자']).index.isin(missing_keys)]
 
-        # 근태기록 파일에 맞는 열만 선택
+        # 사용할 열 정리 (근태기록 형식에 맞춤)
         columns_to_use = ['일자', '사원번호', '소속부서', '사원명', '출근시간', '퇴근시간', '근무시간(시간단위)']
         missing_df = missing_df[columns_to_use]
+
+        # ❗ 출근/퇴근/근무시간 중 하나라도 값이 있는 경우만 필터링
+        missing_df = missing_df[
+            (missing_df['출근시간'].notna()) |
+            (missing_df['퇴근시간'].notna()) |
+            (missing_df['근무시간(시간단위)'].notna())
+        ]
 
         # 병합
         merged_df = pd.concat([att_df, missing_df], ignore_index=True)
 
-        st.success(f"✅ 누락된 출퇴근 기록 {len(missing_df)}건이 추가되었습니다.")
+        st.success(f"✅ 누락된 유효 출퇴근 기록 {len(missing_df)}건이 추가되었습니다.")
         st.dataframe(merged_df)
 
         # 엑셀로 저장
