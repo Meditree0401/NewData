@@ -9,7 +9,7 @@ st.title("📋 월간 출퇴근 자동 병합 시스템")
 st.markdown("""
 - 근무기록에 없는 출퇴근 내역만 병합합니다.  
 - 사원명과 부서는 **근무기록 기준**으로 통일합니다.  
-- 동일인에 대해 부서명이 다를 경우, **근무기록에서 최신 일자에 기록된 부서**로 통합됩니다.
+- 동일 사원(사원번호+이름)에 대해 부서명이 다를 경우, **근무기록에서 최신 일자 기준 부서**로 통합합니다.
 """)
 
 # 파일 업로드
@@ -31,16 +31,17 @@ if caps_file and att_file:
         caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
         att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
-        # 근무기록 기준 최신 부서명 매핑
+        # ✅ 부서 최신화: 사원번호 + 사원명 기준으로 최신 부서 가져오기
+        att_df['부서키'] = att_df['사원번호'] + "_" + att_df['사원명_정규화']
+        caps_df['부서키'] = caps_df['사원번호'] + "_" + caps_df['사원명_정규화']
+
         latest_depts = (
             att_df.sort_values('일자_dt')
-            .groupby('사원명_정규화')['소속부서']
+            .groupby('부서키')['소속부서']
             .last()
             .to_dict()
         )
-
-        # 출퇴근현황의 부서를 최신 부서로 교체
-        caps_df['소속부서'] = caps_df['사원명_정규화'].map(latest_depts).fillna(caps_df['소속부서'])
+        caps_df['소속부서'] = caps_df['부서키'].map(latest_depts).fillna(caps_df['소속부서'])
 
         # 비교키 생성 (일자 + 부서 + 사원명)
         att_df['일자_str'] = att_df['일자_dt'].dt.strftime('%Y-%m-%d')
