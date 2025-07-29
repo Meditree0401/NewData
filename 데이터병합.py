@@ -27,40 +27,44 @@ if caps_file and att_file:
         att_df['일자_dt'] = pd.to_datetime(att_df['일자'])
         caps_df['일자_dt'] = pd.to_datetime(caps_df['일자'])
 
-        # 사원명 정규화 (출퇴근현황에 붙은 A 등 제거)
-        caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
+        # 사원명 정규화
         att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
+        caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
-        # ✅ 부서 최신화: 사원번호 + 사원명 기준으로 최신 부서 가져오기
+        # 부서키: 사원번호 + 정규화된 사원명
         att_df['부서키'] = att_df['사원번호'] + "_" + att_df['사원명_정규화']
         caps_df['부서키'] = caps_df['사원번호'] + "_" + caps_df['사원명_정규화']
 
+        # 근무기록 기준 최신 부서 추출
         latest_depts = (
             att_df.sort_values('일자_dt')
             .groupby('부서키')['소속부서']
             .last()
             .to_dict()
         )
-        # ✅ 부서 덮어쓰기 반드시 비교키 만들기 전에 수행
+
+        # 출퇴근현황에 최신 부서 반영
         caps_df['소속부서'] = caps_df['부서키'].map(latest_depts).fillna(caps_df['소속부서'])
 
-        # 비교키 생성 (일자 + 부서 + 사원명)
+        # 비교키 생성 (소속부서 최신화 후 수행!)
         att_df['일자_str'] = att_df['일자_dt'].dt.strftime('%Y-%m-%d')
         caps_df['일자_str'] = caps_df['일자_dt'].dt.strftime('%Y-%m-%d')
-
         att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'] + "_" + att_df['사원명_정규화']
         caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'] + "_" + caps_df['사원명_정규화']
 
-        # 병합 대상: 근무기록에 없는 출퇴근 내역 중 시간 기록이 있는 것
+        # 병합 대상 필터링 (근무기록에 없는 + 출근/퇴근/근무시간 있는 것만)
         new_records = caps_df[~caps_df['비교키'].isin(att_df['비교키'])].copy()
         new_records = new_records[
             new_records[['출근시간', '퇴근시간', '근무시간(시간단위)']].notna().any(axis=1)
         ].copy()
 
+        # 🔥 여기서도 소속부서 최신화 적용 한 번 더 명시적으로
+        new_records['소속부서'] = new_records['부서키'].map(latest_depts).fillna(new_records['소속부서'])
+
         # 사원명 정제
         new_records['사원명'] = new_records['사원명_정규화']
 
-        # 병합용 열 구성
+        # 병합용 열
         columns = ['일자', '사원번호', '소속부서', '사원명',
                    '출근시간', '퇴근시간', '근무시간(시간단위)', '근태내역', '적요']
 
@@ -76,7 +80,7 @@ if caps_file and att_file:
         # 병합
         merged_df = pd.concat([original_data, formatted_new], ignore_index=True)
 
-        # 엑셀로 저장
+        # 엑셀 저장
         output = io.BytesIO()
         wb = Workbook()
         ws = wb.active
@@ -88,7 +92,6 @@ if caps_file and att_file:
         wb.save(output)
         output.seek(0)
 
-        # 다운로드 버튼
         st.success("✅ 병합 완료! 아래에서 병합된 파일을 다운로드하세요.")
         st.download_button(
             label="📥 병합된 근무기록 다운로드",
@@ -96,6 +99,9 @@ if caps_file and att_file:
             file_name="근무기록_병합본.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    except Exception as e:
+        st.error(f"❌ 오류 발생: {e}")
 
     except Exception as e:
         st.error(f"❌ 오류 발생: {e}")
