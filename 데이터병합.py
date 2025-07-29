@@ -8,8 +8,7 @@ st.set_page_config(page_title="월간 출퇴근 자동 병합 시스템", layout
 st.title("📋 월간 출퇴근 자동 병합 시스템")
 st.markdown("""
 - 근무기록에 없는 출퇴근 내역만 병합합니다.  
-- 사원명과 부서는 **근무기록 기준**으로 통일합니다.  
-- 동일 사원(사원번호+이름)에 대해 부서명이 다를 경우, **근무기록에서 최신 일자 기준 부서**로 통합합니다.
+- 동일 사원번호에 대해 부서명이 다를 경우, **근무기록에서 최신 일자 기준 부서**로 통일합니다.
 """)
 
 # 파일 업로드
@@ -31,40 +30,33 @@ if caps_file and att_file:
         att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
         caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
-        # 부서키: 사원번호 + 정규화된 사원명
-        att_df['부서키'] = att_df['사원번호'] + "_" + att_df['사원명_정규화']
-        caps_df['부서키'] = caps_df['사원번호'] + "_" + caps_df['사원명_정규화']
-
-        # 근무기록 기준 최신 부서 추출
+        # ✅ 사원번호 기준으로 최신 부서 추출
         latest_depts = (
             att_df.sort_values('일자_dt')
-            .groupby('부서키')['소속부서']
+            .groupby('사원번호')['소속부서']
             .last()
             .to_dict()
         )
 
-        # 출퇴근현황에 최신 부서 반영
-        caps_df['소속부서'] = caps_df['부서키'].map(latest_depts).fillna(caps_df['소속부서'])
+        # ✅ 출퇴근현황에 최신 부서 덮어쓰기
+        caps_df['소속부서'] = caps_df['사원번호'].map(latest_depts).fillna(caps_df['소속부서'])
 
-        # 비교키 생성 (소속부서 최신화 후 수행!)
+        # 비교키 생성 (부서 정제 이후)
         att_df['일자_str'] = att_df['일자_dt'].dt.strftime('%Y-%m-%d')
         caps_df['일자_str'] = caps_df['일자_dt'].dt.strftime('%Y-%m-%d')
-        att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'] + "_" + att_df['사원명_정규화']
-        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'] + "_" + caps_df['사원명_정규화']
+        att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'] + "_" + att_df['사원번호']
+        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'] + "_" + caps_df['사원번호']
 
-        # 병합 대상 필터링 (근무기록에 없는 + 출근/퇴근/근무시간 있는 것만)
+        # 병합 대상: 근무기록에 없는 + 시간 기록이 있는 것만
         new_records = caps_df[~caps_df['비교키'].isin(att_df['비교키'])].copy()
         new_records = new_records[
             new_records[['출근시간', '퇴근시간', '근무시간(시간단위)']].notna().any(axis=1)
         ].copy()
 
-        # 🔥 여기서도 소속부서 최신화 적용 한 번 더 명시적으로
-        new_records['소속부서'] = new_records['부서키'].map(latest_depts).fillna(new_records['소속부서'])
-
         # 사원명 정제
         new_records['사원명'] = new_records['사원명_정규화']
 
-        # 병합용 열
+        # 병합 열 정리
         columns = ['일자', '사원번호', '소속부서', '사원명',
                    '출근시간', '퇴근시간', '근무시간(시간단위)', '근태내역', '적요']
 
@@ -99,9 +91,6 @@ if caps_file and att_file:
             file_name="근무기록_병합본.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-    except Exception as e:
-        st.error(f"❌ 오류 발생: {e}")
 
     except Exception as e:
         st.error(f"❌ 오류 발생: {e}")
