@@ -1,73 +1,82 @@
 import streamlit as st
 import pandas as pd
 import io
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 st.set_page_config(page_title="월간 출퇴근 자동 병합 시스템", layout="wide")
 st.title("📋 월간 출퇴근 자동 병합 시스템")
-st.markdown("근무기록에 없는 출퇴근 내역만 병합하며, 사원명과 부서는 반드시 근무기록 기준으로 통일합니다.")
+st.markdown("근무기록에 없는 출퇴근 내역만 병합하며, **사원명과 부서는 반드시 근무기록 기준**으로 통일합니다.")
 
 # 파일 업로드
-caps_file = st.file_uploader("1️⃣ '출퇴근현황(캡스)' 파일을 업로드하세요", type=["xlsx"])
-att_file = st.file_uploader("2️⃣ '근무기록' 파일을 업로드하세요", type=["xlsx"])
+caps_file = st.file_uploader("🟦 `출퇴근현황(캡스)` 파일을 업로드하세요", type=["xlsx"])
+att_file = st.file_uploader("🟨 `근무기록` 파일을 업로드하세요", type=["xlsx"])
 
 if caps_file and att_file:
     try:
-        # 엑셀 로딩
+        # 파일 로딩
         caps_df = pd.read_excel(caps_file, sheet_name=0, header=1)
         att_df = pd.read_excel(att_file, sheet_name=0)
 
-        # 날짜 형식 정리 & 사원번호 통일 (숫자만, zfill 5자리)
+        # 날짜 필터링 및 사원번호 처리
         for df in [caps_df, att_df]:
-            df['일자'] = pd.to_datetime(df['일자'], errors='coerce').dt.date
-            df['사원번호'] = df['사원번호'].astype(str).str.replace(r'\D', '', regex=True).str.zfill(5)
+            df['사원번호'] = df['사원번호'].astype(str)
 
-        # 근무기록 기준 사원번호 → 이름/부서 매핑 딕셔너리 생성
-        id_to_name = att_df.set_index('사원번호')['사원명'].to_dict()
-        id_to_dept = att_df.set_index('사원번호')['소속부서'].to_dict()
+        # 날짜 형식 정리
+        caps_df = caps_df[pd.to_datetime(caps_df['일자'], errors='coerce').notna()].copy()
+        att_df['일자_str'] = pd.to_datetime(att_df['일자']).dt.strftime('%Y-%m-%d')
+        caps_df['일자_str'] = pd.to_datetime(caps_df['일자']).dt.strftime('%Y-%m-%d')
 
-        # 출퇴근현황에 이름/부서 덮어쓰기: 무조건 근무기록 기준
-        caps_df['사원번호'] = caps_df['사원번호'].astype(str).str.replace(r'\D', '', regex=True).str.zfill(5)
-        caps_df['사원명'] = caps_df['사원번호'].map(id_to_name).fillna(caps_df['사원명'])
-        caps_df['소속부서'] = caps_df['사원번호'].map(id_to_dept).fillna(caps_df['소속부서'])
+        # 사원명에서 뒤 A 제거
+        caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
+        att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
-        # 기준 키 생성 (사원번호 + 일자)
-        att_keys = set(zip(att_df['사원번호'], att_df['일자']))
-        caps_df['key'] = list(zip(caps_df['사원번호'], caps_df['일자']))
-        new_records = caps_df[~caps_df['key'].isin(att_keys)]
+        # 비교키 생성
+        att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'].astype(str) + "_" + att_df['사원명_정규화']
+        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'].astype(str) + "_" + caps_df['사원명_정규화']
 
-        # 유효한 출퇴근 내역만 필터링
+        # 누락된 내역만 추출 + 출퇴근 시간 있는 것만
+        new_records = caps_df[~caps_df['비교키'].isin(att_df['비교키'])].copy()
         new_records = new_records[
-            (new_records['출근시간'].notna()) |
-            (new_records['퇴근시간'].notna()) |
-            (new_records['근무시간(시간단위)'].notna())
-        ]
+            new_records[['출근시간', '퇴근시간', '근무시간(시간단위)']].notna().any(axis=1)
+        ].copy()
 
-        # 필요한 열 정리
-        columns_to_use = ['일자', '사원번호', '소속부서', '사원명', '출근시간', '퇴근시간', '근무시간(시간단위)']
-        new_records = new_records[columns_to_use]
+        # 사원명 정리
+        new_records['사원명'] = new_records['사원명_정규화']
+
+        # 필요한 열 맞추기
+        columns = ['일자', '사원번호', '소속부서', '사원명', 
+                   '출근시간', '퇴근시간', '근무시간(시간단위)', '근태내역', '적요']
+
+        for col in ['근태내역', '적요']:
+            att_df[col] = ""
+            new_records[col] = ""
+
+        formatted_new = new_records[columns].copy()
+        original_data = att_df[columns].copy()
 
         # 병합
-        merged_df = pd.concat([att_df, new_records], ignore_index=True)
+        merged_df = pd.concat([original_data, formatted_new], ignore_index=True)
 
-        st.success(f"✅ 근무기록에 없던 출퇴근 내역 {len(new_records)}건이 추가되었습니다. (사원명·부서 통일 완료)")
-        st.dataframe(merged_df)
-
-        # 엑셀 저장
+        # 엑셀로 변환
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            merged_df.to_excel(writer, index=False, sheet_name='보완 근태기록')
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "출 퇴근현황(ID)"
+
+        for row in dataframe_to_rows(merged_df, index=False, header=True):
+            ws.append(row)
+
+        wb.save(output)
         output.seek(0)
 
-        # 다운로드 버튼
+        st.success("✅ 병합 완료! 아래에서 파일을 다운로드하세요.")
         st.download_button(
-            label="📥 보완된 근태기록 다운로드",
+            label="📥 병합된 근무기록 다운로드",
             data=output,
-            file_name="보완_근태기록.xlsx",
+            file_name="근무기록_병합본.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
     except Exception as e:
-        st.error(f"⚠️ 오류 발생: {e}")
-
-else:
-    st.info("👆 두 파일을 모두 업로드하면 병합 결과가 표시됩니다.")
+        st.error(f"❌ 오류 발생: {e}")
