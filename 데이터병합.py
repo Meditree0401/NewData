@@ -41,6 +41,7 @@ if caps_file and att_file:
             .last()
             .to_dict()
         )
+        # ✅ 부서 덮어쓰기 반드시 비교키 만들기 전에 수행
         caps_df['소속부서'] = caps_df['부서키'].map(latest_depts).fillna(caps_df['소속부서'])
 
         # 비교키 생성 (일자 + 부서 + 사원명)
