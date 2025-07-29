@@ -8,7 +8,7 @@ st.set_page_config(page_title="월간 출퇴근 자동 병합 시스템", layout
 st.title("📋 월간 출퇴근 자동 병합 시스템")
 st.markdown("""
 - 근무기록에 없는 출퇴근 내역만 병합합니다.  
-- 동일 사원번호에 대해 부서명이 다를 경우, **근무기록에서 최신 일자 기준 부서**로 통일합니다.  
+- 동일 사원번호에 대해 부서명이 다를 경우, **가장 마지막 날짜 기준 부서**로 통일합니다.  
 - 원본 포맷은 유지되며, 병합된 행만 추가됩니다.
 """)
 
@@ -31,9 +31,14 @@ if caps_file and att_file:
         caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
         att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
-        # 4. 최신 부서 매핑 (사원번호 기준)
+        # 4. 전체 데이터 기준 최신 부서 추출 (caps + att 결합 후 최신 부서 결정)
+        all_df = pd.concat([
+            caps_df[['사원번호', '소속부서', '일자_dt']],
+            att_df[['사원번호', '소속부서', '일자_dt']]
+        ], ignore_index=True)
+
         latest_depts = (
-            att_df.sort_values('일자_dt')
+            all_df.sort_values('일자_dt')
             .groupby('사원번호')['소속부서']
             .last()
             .to_dict()
@@ -41,7 +46,7 @@ if caps_file and att_file:
 
         # 5. 최신 부서 적용 + 사원명 정제 반영
         caps_df['소속부서'] = caps_df['사원번호'].map(latest_depts).fillna(caps_df['소속부서'])
-        caps_df['사원명'] = caps_df['사원명_정규화']  # 이름도 정제본으로 덮어쓰기
+        caps_df['사원명'] = caps_df['사원명_정규화']
 
         # 6. 비교키 생성
         caps_df['일자_str'] = caps_df['일자_dt'].dt.strftime('%Y-%m-%d')
@@ -49,16 +54,16 @@ if caps_file and att_file:
         caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'] + "_" + caps_df['사원번호']
         att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'] + "_" + att_df['사원번호']
 
-        # 7. 시간 정보 있는 행만 필터
+        # 7. 시간 정보가 있는 행만 필터
         time_cols = ['출근시간', '퇴근시간', '근무시간(시간단위)']
         caps_df_time = caps_df[caps_df[time_cols].notna().any(axis=1)].copy()
 
         # 8. 병합 대상 추출
         new_records = caps_df_time[~caps_df_time['비교키'].isin(att_df['비교키'])].copy()
 
-        # 9. 사원명·부서 정리 (혹시 남아있을까 다시 정제)
+        # 9. 병합 대상에 최신 부서 재반영 (혹시 빠졌을 경우를 대비)
+        new_records['소속부서'] = new_records['사원번호'].map(latest_depts).fillna(new_records['소속부서'])
         new_records['사원명'] = new_records['사원명_정규화']
-        new_records['소속부서'] = new_records['소속부서']
 
         # 10. 병합용 컬럼 구성
         columns = ['일자', '사원번호', '소속부서', '사원명',
@@ -90,12 +95,9 @@ if caps_file and att_file:
         st.download_button(
             label="📥 병합된 근무기록 다운로드",
             data=output,
-            file_name="근무기록_병합본.xlsx",
+            file_name="근무기록_병합본_최신부서기준.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-    except Exception as e:
-        st.error(f"❌ 오류 발생: {e}")
 
     except Exception as e:
         st.error(f"❌ 오류 발생: {e}")
