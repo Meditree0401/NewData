@@ -18,49 +18,48 @@ att_file = st.file_uploader("🟨 `근무기록` 파일을 업로드하세요", 
 
 if caps_file and att_file:
     try:
-        # ⛔ 사원번호 앞자리 0 유지
-        caps_df = pd.read_excel(caps_file, sheet_name=0, header=1, dtype={'사원번호': str})
-        att_df = pd.read_excel(att_file, sheet_name=0, dtype={'사원번호': str})
+        # 1. 데이터 불러오기
+        caps_df = pd.read_excel(caps_file, sheet_name=0, header=1, dtype={"사원번호": str})
+        att_df = pd.read_excel(att_file, sheet_name=0, dtype={"사원번호": str})
 
-        # 날짜 정리
+        # 2. 날짜 정리
         caps_df = caps_df[pd.to_datetime(caps_df['일자'], errors='coerce').notna()].copy()
-        att_df['일자_dt'] = pd.to_datetime(att_df['일자'])
         caps_df['일자_dt'] = pd.to_datetime(caps_df['일자'])
+        att_df['일자_dt'] = pd.to_datetime(att_df['일자'])
 
-        # 사원명 정규화 (A 제거 등)
-        att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
+        # 3. 사원명 정규화
         caps_df['사원명_정규화'] = caps_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
+        att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
-        # ✅ 사원번호 기준 최신 소속부서 추출
-        latest_depts = (
+        # 4. 근무기록 기준 최신 부서 매핑
+        latest_dept_map = (
             att_df.sort_values('일자_dt')
             .groupby('사원번호')['소속부서']
             .last()
             .to_dict()
         )
 
-        # ✅ caps_df 부서 먼저 통일
-        caps_df['소속부서'] = caps_df['사원번호'].map(latest_depts).fillna(caps_df['소속부서'])
+        # 5. 출퇴근현황에 최신 부서 반영 (새 컬럼으로 넣음)
+        caps_df['소속부서_정제'] = caps_df['사원번호'].map(latest_dept_map).fillna(caps_df['소속부서'])
 
-        # 비교키 생성 (부서 통일 후)
-        att_df['일자_str'] = att_df['일자_dt'].dt.strftime('%Y-%m-%d')
+        # 6. 비교키 생성 (반영된 부서 사용)
         caps_df['일자_str'] = caps_df['일자_dt'].dt.strftime('%Y-%m-%d')
+        att_df['일자_str'] = att_df['일자_dt'].dt.strftime('%Y-%m-%d')
+        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서_정제'] + "_" + caps_df['사원번호']
         att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'] + "_" + att_df['사원번호']
-        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'] + "_" + caps_df['사원번호']
 
-        # 병합 대상 필터링: 근무기록에 없는 + 시간 데이터 존재
-        new_records = caps_df[~caps_df['비교키'].isin(att_df['비교키'])].copy()
-        new_records = new_records[
-            new_records[['출근시간', '퇴근시간', '근무시간(시간단위)']].notna().any(axis=1)
-        ].copy()
+        # 7. 시간 정보가 있는 행만 필터
+        time_cols = ['출근시간', '퇴근시간', '근무시간(시간단위)']
+        caps_df_time = caps_df[caps_df[time_cols].notna().any(axis=1)].copy()
 
-        # ✅ 혹시 caps_df에서 소속부서가 반영 안된 상태로 복사됐을 가능성 → 재보정
-        new_records['소속부서'] = new_records['사원번호'].map(latest_depts).fillna(new_records['소속부서'])
+        # 8. 비교키 기준 병합 대상 찾기
+        new_records = caps_df_time[~caps_df_time['비교키'].isin(att_df['비교키'])].copy()
 
-        # 사원명도 정제본으로 대체
+        # 9. 사원명/소속부서 정제하여 병합용 데이터 만들기
         new_records['사원명'] = new_records['사원명_정규화']
+        new_records['소속부서'] = new_records['소속부서_정제']
 
-        # 병합용 열
+        # 10. 병합 열 설정
         columns = ['일자', '사원번호', '소속부서', '사원명',
                    '출근시간', '퇴근시간', '근무시간(시간단위)', '근태내역', '적요']
 
@@ -70,12 +69,13 @@ if caps_file and att_file:
             if col not in new_records.columns:
                 new_records[col] = ""
 
-        # 병합
-        formatted_new = new_records[columns].copy()
-        original_data = att_df[columns].copy()
-        merged_df = pd.concat([original_data, formatted_new], ignore_index=True)
+        # 11. 병합
+        merged_df = pd.concat([
+            att_df[columns],
+            new_records[columns]
+        ], ignore_index=True)
 
-        # 엑셀로 저장
+        # 12. 엑셀로 저장
         output = io.BytesIO()
         wb = Workbook()
         ws = wb.active
@@ -87,6 +87,7 @@ if caps_file and att_file:
         wb.save(output)
         output.seek(0)
 
+        # 13. 다운로드
         st.success("✅ 병합 완료! 아래에서 병합된 파일을 다운로드하세요.")
         st.download_button(
             label="📥 병합된 근무기록 다운로드",
