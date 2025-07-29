@@ -32,34 +32,35 @@ if caps_file and att_file:
         att_df['사원명_정규화'] = att_df['사원명'].astype(str).str.extract(r'([가-힣]+)')
 
         # 4. 근무기록 기준 최신 부서 매핑
-        latest_dept_map = (
+        latest_depts = (
             att_df.sort_values('일자_dt')
             .groupby('사원번호')['소속부서']
             .last()
             .to_dict()
         )
 
-        # 5. 출퇴근현황에 최신 부서 반영 (새 컬럼으로 넣음)
-        caps_df['소속부서_정제'] = caps_df['사원번호'].map(latest_dept_map).fillna(caps_df['소속부서'])
+        # 5. 최신 부서 반영 (caps_df 전체에)
+        caps_df['소속부서_정제'] = caps_df['사원번호'].map(latest_depts).fillna(caps_df['소속부서'])
+        caps_df['소속부서'] = caps_df['소속부서_정제']  # 이걸 꼭 해줘야 병합에 반영됨
 
-        # 6. 비교키 생성 (반영된 부서 사용)
+        # 6. 비교키 생성
         caps_df['일자_str'] = caps_df['일자_dt'].dt.strftime('%Y-%m-%d')
         att_df['일자_str'] = att_df['일자_dt'].dt.strftime('%Y-%m-%d')
-        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서_정제'] + "_" + caps_df['사원번호']
+        caps_df['비교키'] = caps_df['일자_str'] + "_" + caps_df['소속부서'] + "_" + caps_df['사원번호']
         att_df['비교키'] = att_df['일자_str'] + "_" + att_df['소속부서'] + "_" + att_df['사원번호']
 
         # 7. 시간 정보가 있는 행만 필터
         time_cols = ['출근시간', '퇴근시간', '근무시간(시간단위)']
         caps_df_time = caps_df[caps_df[time_cols].notna().any(axis=1)].copy()
 
-        # 8. 비교키 기준 병합 대상 찾기
+        # 8. 병합 대상 추출 (근무기록에 없는 것만)
         new_records = caps_df_time[~caps_df_time['비교키'].isin(att_df['비교키'])].copy()
 
-        # 9. 사원명/소속부서 정제하여 병합용 데이터 만들기
-        new_records['사원명'] = new_records['사원명_정규화']
+        # 9. 부서와 이름 정제
         new_records['소속부서'] = new_records['소속부서_정제']
+        new_records['사원명'] = new_records['사원명_정규화']
 
-        # 10. 병합 열 설정
+        # 10. 병합 컬럼 설정
         columns = ['일자', '사원번호', '소속부서', '사원명',
                    '출근시간', '퇴근시간', '근무시간(시간단위)', '근태내역', '적요']
 
@@ -75,7 +76,7 @@ if caps_file and att_file:
             new_records[columns]
         ], ignore_index=True)
 
-        # 12. 엑셀로 저장
+        # 12. 엑셀 파일 생성
         output = io.BytesIO()
         wb = Workbook()
         ws = wb.active
@@ -87,7 +88,7 @@ if caps_file and att_file:
         wb.save(output)
         output.seek(0)
 
-        # 13. 다운로드
+        # 13. 다운로드 버튼 표시
         st.success("✅ 병합 완료! 아래에서 병합된 파일을 다운로드하세요.")
         st.download_button(
             label="📥 병합된 근무기록 다운로드",
